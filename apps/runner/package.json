@@ -1,0 +1,16 @@
+{
+  "name": "@devailoop/runner",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@devailoop/runner-shared": "workspace:*"
+  }
+}

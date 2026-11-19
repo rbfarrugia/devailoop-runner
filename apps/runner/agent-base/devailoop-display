@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# devailoop-display <command> [arguments...]
+#
+# Runs a command with a virtual display that works inside the Agent's sandbox, as `xvfb-run -a`
+# would outside it. The sandbox refuses Unix sockets, so Xvfb listens on TCP only and the
+# command is given DISPLAY=localhost:<n>. Each sandboxed command has a network of its own, so
+# the display lives and ends with this one command. Xvfb writes its lock file to /tmp, a path
+# fixed in Xvfb (its -nolock is for root only), so /tmp must be writable: the sandbox allows that
+# only for Projects that need a display, and keeps its own sockets elsewhere. See docs/agent-containers.md.
+set -u
+
+first=${DEVAILOOP_DISPLAY_FIRST:-99}
+tries=${DEVAILOOP_DISPLAY_TRIES:-20}
+wait_seconds=${DEVAILOOP_DISPLAY_WAIT_SECONDS:-15}
+screen=${DEVAILOOP_DISPLAY_SCREEN:-1280x1024x24}
+# Where Xvfb keeps its lock files. It is fixed in Xvfb; only tests point this elsewhere.
+lock_dir=${DEVAILOOP_DISPLAY_LOCK_DIR:-/tmp}
+
+say() { echo "devailoop-display: $*" >&2; }
+
+if [ $# -eq 0 ]; then
+  say "usage: devailoop-display <command> [arguments...]"
+  exit 2
+fi
+if ! command -v Xvfb >/dev/null 2>&1; then
+  say "Xvfb is not installed in this image. Add the xvfb package to the Agent's image (see docs/agent-containers.md), or run the program headless."
+  exit 127
+fi
+not_writable() {
+  say "$lock_dir is not writable (does this Project need a display?). Xvfb cannot start without it."
+  exit 1
+}
+[ -d "$lock_dir" ] && [ -w "$lock_dir" ] || not_writable
+
+xvfb_pid=
+log=$(mktemp -p "$lock_dir" devailoop-display.XXXXXX 2>/dev/null) || not_writable
+stop_display() {
+  if [ -n "$xvfb_pid" ]; then
+    kill "$xvfb_pid" 2>/dev/null
+    wait "$xvfb_pid" 2>/dev/null
+    xvfb_pid=
+  fi
+}
+trap 'stop_display; rm -f "$log"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Whether something accepts connections on this port of the loopback.
+accepting() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+
+display=$first
+while [ $((display - first)) -lt "$tries" ]; do
+  port=$((6000 + display))
+  # Taken already, by another command's display or by something else on the port.
+  if [ -e "$lock_dir/.X$display-lock" ] || accepting "$port"; then
+    display=$((display + 1))
+    continue
+  fi
+
+  Xvfb ":$display" -listen tcp -nolisten unix -screen 0 "$screen" >"$log" 2>&1 &
+  xvfb_pid=$!
+  deadline=$((SECONDS + wait_seconds))
+  while kill -0 "$xvfb_pid" 2>/dev/null; do
+    if accepting "$port"; then
+      DISPLAY="localhost:$display" "$@"
+      exit $?
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      say "Xvfb on display :$display did not accept connections within $wait_seconds seconds. It said:"
+      cat "$log" >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+  # Xvfb ended before it was ready: most likely another command took the display meanwhile.
+  wait "$xvfb_pid" 2>/dev/null
+  xvfb_pid=
+  display=$((display + 1))
+done
+
+say "no display could be started on :$first to :$((first + tries - 1)). Xvfb last said:"
+cat "$log" >&2
+exit 1
