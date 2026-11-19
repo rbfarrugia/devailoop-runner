@@ -50,7 +50,7 @@ async function credential() {
     stored = JSON.parse(readFileSync(credentialFile, 'utf8'));
   } catch {}
   if (stored?.credential && (!token || sha256(token) === stored.enrolledWith)) return stored.credential;
-  if (!token) fail('this worker has no credential yet, and DEVAILOOP_ENROLMENT_TOKEN is not set in .env.');
+  if (!token) fail('this worker has no credential yet, and DEVAILOOP_ENROLMENT_TOKEN is not set in worker.env.');
   const response = await call('/api/worker/enrol', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -58,7 +58,7 @@ async function credential() {
   });
   if (!response.ok) {
     if (stored?.credential) {
-      console.error('devailoop worker: the enrolment token in .env was refused; carrying on with the stored credential.');
+      console.error('devailoop worker: the enrolment token in worker.env was refused; carrying on with the stored credential.');
       return stored.credential;
     }
     fail('enrolment was refused. ' + (await message(response)));
@@ -147,7 +147,7 @@ async function installSdk(bundleDir) {
 }
 
 const setup = process.argv[2] === 'setup-github';
-if (!server) fail('DEVAILOOP_SERVER_URL is not set in .env.');
+if (!server) fail('DEVAILOOP_SERVER_URL is not set in worker.env.');
 mkdirSync(bundlesDir, { recursive: true });
 let sha = current();
 try {

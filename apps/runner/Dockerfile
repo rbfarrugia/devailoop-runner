@@ -14,6 +14,10 @@ COPY packages/runner-shared packages/runner-shared
 RUN node apps/runner/bundle.mjs /out
 
 FROM node:24-bookworm-slim AS runner
+# CA certificates: the buildx client in this container fetches registry tokens over HTTPS for the builder (FROM node:..., FROM alpine:...).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 # The runner's own version (semver, independent of the server's); the runner tells the worker, which reports it to the server.
 ARG DEVAILOOP_VERSION=dev
 ENV DEVAILOOP_VERSION=$DEVAILOOP_VERSION
