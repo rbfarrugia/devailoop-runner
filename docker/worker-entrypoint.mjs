@@ -5,7 +5,8 @@
 // It holds no dollar sign, so that Compose does not interpolate it.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const env = process.env;
@@ -13,7 +14,11 @@ const dataDir = env.DEVAILOOP_DATA_DIR || '/data';
 const withoutSlash = (url) => (url.endsWith('/') ? withoutSlash(url.slice(0, -1)) : url);
 const server = withoutSlash(env.DEVAILOOP_SERVER_URL || '');
 const registry = withoutSlash(env.DEVAILOOP_NPM_REGISTRY || 'https://registry.npmjs.org');
-const bundlesDir = join(dataDir, 'bundle');
+// `setup-github --export` makes the worker's GitHub App for a worker elsewhere: it touches nothing in the data
+// volume, does not enrol (which would use up the enrolment token the cloud worker needs), and unpacks the
+// bundle into a folder that is removed at the end.
+const exporting = process.argv[2] === 'setup-github' && process.argv.includes('--export');
+const bundlesDir = exporting ? mkdtempSync(join(tmpdir(), 'devailoop-export-')) : join(dataDir, 'bundle');
 const credentialFile = join(dataDir, 'worker-credential', 'credential.json');
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
@@ -69,6 +74,13 @@ async function credential() {
   return credential;
 }
 
+/** What `setup-github --export` shows the server instead of a credential: the unused enrolment token, which the fetch does not use up. */
+function exportHeaders() {
+  const token = env.DEVAILOOP_ENROLMENT_TOKEN;
+  if (!token) fail('DEVAILOOP_ENROLMENT_TOKEN is not set. Pass the worker\'s enrolment token with -e DEVAILOOP_ENROLMENT_TOKEN=... (it is not used up).');
+  return { 'x-devailoop-enrolment-token': token };
+}
+
 /** The sha256 of the bundle this worker last ran, if its folder is still there. */
 function current() {
   try {
@@ -80,10 +92,10 @@ function current() {
 }
 
 /** Fetches the bundle when the server has a newer one than `have`. Returns the sha256 to run. */
-async function fetchBundle(credential, have) {
-  const headers = { authorization: 'Bearer ' + credential };
+async function fetchBundle(headers, have) {
   const response = await call('/api/worker/bundle', { headers: have ? { ...headers, 'if-none-match': '"' + have + '"' } : headers });
   if (response.status === 304 && have) return have;
+  if (exporting && response.status === 401) fail('the server refused the enrolment token. ' + (await message(response)));
   if (response.status === 401 || response.status === 403) fail('the server refused this worker (' + response.status + '): it has been revoked. Add it again on the Workers page.');
   if (!response.ok) fail('the server would not send the worker bundle. ' + (await message(response)));
   const bytes = Buffer.from(await response.arrayBuffer());
@@ -151,17 +163,21 @@ if (!server) fail('DEVAILOOP_SERVER_URL is not set in worker.env.');
 mkdirSync(bundlesDir, { recursive: true });
 let sha = current();
 try {
-  sha = await fetchBundle(await credential(), sha);
+  sha = await fetchBundle(exporting ? exportHeaders() : { authorization: 'Bearer ' + (await credential()) }, sha);
 } catch (error) {
   if (!(error instanceof Unreachable) || !sha) fail(error.message);
   console.error('devailoop worker: ' + error.message + '; starting the cached bundle ' + sha + '.');
 }
-const manifest = await installSdk(sha);
+// Making the App needs no Agent SDK.
+const manifest = exporting ? JSON.parse(readFileSync(join(bundlesDir, sha, 'manifest.json'), 'utf8')) : await installSdk(sha);
 
 const script = setup ? 'setup-github.js' : 'main.js';
 const child = spawn('node', [join(bundlesDir, sha, 'dist', script), ...process.argv.slice(setup ? 3 : 2)], {
   stdio: 'inherit',
   env: { ...env, DEVAILOOP_BUNDLE_SHA256: sha, DEVAILOOP_VERSION: manifest.version },
 });
-for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal));
-child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGUSR2']) process.on(signal, () => child.kill(signal));
+child.on('exit', (code, signal) => {
+  if (exporting) rmSync(bundlesDir, { recursive: true, force: true });
+  process.exit(code ?? (signal ? 1 : 0));
+});

@@ -209,6 +209,9 @@ export function createRunner(options: RunnerOptions): Server {
                 available: false,
                 reason:
                   `bubblewrap, which the sandbox is built on, cannot run in the Agent's image: ${said}.` +
+                  (limits.apparmor === 'unconfined'
+                    ? ''
+                    : ` The Agent's containers run under the AppArmor profile ${limits.apparmor} (DEVAILOOP_AGENT_APPARMOR), which must allow the sandbox's mounts.`) +
                   (limits.seccomp === 'unconfined'
                     ? ''
                     : " If the host cannot use the runner's system-call profile, set DEVAILOOP_AGENT_SECCOMP=unconfined for the runner."),

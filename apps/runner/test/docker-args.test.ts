@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_CONTAINER_SETTINGS,
   SANDBOX_TMPDIR,
   SECCOMP_PROFILE,
   agentContainerSettings,
@@ -51,7 +52,7 @@ describe('the docker run for a session', () => {
       mounts.filter((mount) => mount.startsWith('type=volume')).every((mount) => mount.includes(',volume-subpath=')),
     ).toBe(true);
     expect(beforeImage.join(' ')).toContain(`--security-opt seccomp=${SECCOMP_PROFILE}`);
-    expect(beforeImage.join(' ')).not.toContain('unconfined');
+    expect(beforeImage.join(' ')).not.toContain('seccomp=unconfined');
     expect(beforeImage).not.toContain('--privileged');
     expect(beforeImage.join(' ')).not.toContain('docker.sock');
     expect(beforeImage.join(' ')).toContain('--workdir /data/projects/SHOP/working-copies/SHOP-1');
@@ -328,7 +329,14 @@ describe('what a container may take from the host', () => {
       expect(options, kind).not.toContain('--cap-add');
       expect(options, kind).toContain('--security-opt no-new-privileges');
       expect(options, kind).toContain(`--security-opt seccomp=${SECCOMP_PROFILE}`);
+      // Docker's AppArmor profile, on Ubuntu, refuses the mounts the sandbox makes.
+      expect(options, kind).toContain('--security-opt apparmor=unconfined');
     }
+  });
+
+  it('runs under the AppArmor profile it is given', () => {
+    for (const [kind, args] of Object.entries(runs({ ...DEFAULT_CONTAINER_SETTINGS, apparmor: 'devailoop-agent' })))
+      expect(before(args), kind).toContain('--security-opt apparmor=devailoop-agent');
   });
 
   it('takes the limits it was given, and keeps unconfined as a fallback that changes nothing else', () => {
@@ -338,6 +346,7 @@ describe('what a container may take from the host', () => {
       cpuShares: 1024,
       cpus: '4',
       seccomp: 'unconfined' as const,
+      apparmor: 'unconfined',
       buildkitImage: 'x/y:1',
     };
     for (const [kind, args] of Object.entries(runs(limits))) {
@@ -362,6 +371,7 @@ describe('what a container may take from the host', () => {
         pids: 4096,
         cpuShares: 512,
         seccomp: 'devailoop',
+        apparmor: 'unconfined',
         buildkitImage: 'moby/buildkit:buildx-stable-1',
       },
     });
@@ -371,6 +381,7 @@ describe('what a container may take from the host', () => {
         DEVAILOOP_AGENT_PIDS: '100',
         DEVAILOOP_AGENT_CPUS: '1.5',
         DEVAILOOP_AGENT_SECCOMP: 'unconfined',
+        DEVAILOOP_AGENT_APPARMOR: 'docker-default',
         DEVAILOOP_BUILDKIT_IMAGE: 'registry.example/buildkit:1',
       }),
     ).toEqual({
@@ -380,6 +391,7 @@ describe('what a container may take from the host', () => {
         cpuShares: 512,
         cpus: '1.5',
         seccomp: 'unconfined',
+        apparmor: 'docker-default',
         buildkitImage: 'registry.example/buildkit:1',
       },
     });
@@ -396,6 +408,9 @@ describe('what a container may take from the host', () => {
     });
     expect(agentContainerSettings({ DEVAILOOP_AGENT_SECCOMP: 'off' })).toEqual({
       problem: expect.stringContaining('DEVAILOOP_AGENT_SECCOMP'),
+    });
+    expect(agentContainerSettings({ DEVAILOOP_AGENT_APPARMOR: 'x,seccomp=unconfined' })).toEqual({
+      problem: expect.stringContaining('DEVAILOOP_AGENT_APPARMOR'),
     });
     expect(agentContainerSettings({ DEVAILOOP_BUILDKIT_IMAGE: '--privileged x' })).toEqual({
       problem: expect.stringContaining('DEVAILOOP_BUILDKIT_IMAGE'),

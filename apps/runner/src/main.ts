@@ -47,7 +47,7 @@ if (baseCandidates > 0)
 const server = createRunner({ docker: realDocker, image, dataVolume, limits });
 server.listen(port, () =>
   log.info(
-    `listening on ${port}, sessions run in ${image} (or their Project's Environment image) with parts of ${dataVolume} under /data (Docker ${version.stdout.trim()}); each container may take ${limits.memory} of memory and ${limits.pids} processes${limits.cpus ? ` and ${limits.cpus} CPUs` : ''}, builds run in the builder ${builderName(dataVolume)} with the same limits (${limits.buildkitImage}), system calls filtered by ${limits.seccomp === 'unconfined' ? 'nothing (DEVAILOOP_AGENT_SECCOMP=unconfined)' : "the runner's profile"}`,
+    `listening on ${port}, sessions run in ${image} (or their Project's Environment image) with parts of ${dataVolume} under /data (Docker ${version.stdout.trim()}); each container may take ${limits.memory} of memory and ${limits.pids} processes${limits.cpus ? ` and ${limits.cpus} CPUs` : ''}, builds run in the builder ${builderName(dataVolume)} with the same limits (${limits.buildkitImage}), system calls filtered by ${limits.seccomp === 'unconfined' ? 'nothing (DEVAILOOP_AGENT_SECCOMP=unconfined)' : "the runner's profile"}, AppArmor profile ${limits.apparmor}`,
   ),
 );
 

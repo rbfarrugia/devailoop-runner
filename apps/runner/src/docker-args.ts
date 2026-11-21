@@ -121,6 +121,12 @@ export interface AgentContainerSettings {
   cpus?: string;
   /** `devailoop`: the profile shipped with the runner. `unconfined`: no filter, the documented fallback. */
   seccomp: 'devailoop' | 'unconfined';
+  /**
+   * The AppArmor profile, on hosts that have AppArmor (Ubuntu). `unconfined` by default: Docker's own,
+   * docker-default, refuses every mount, so bubblewrap cannot make its mount namespace under it.
+   * Ignored by Docker where there is no AppArmor.
+   */
+  apparmor: string;
   /** The BuildKit image the Environment builder's container runs, pulled when the builder is first made. */
   buildkitImage: string;
 }
@@ -133,6 +139,7 @@ export const DEFAULT_CONTAINER_SETTINGS: AgentContainerSettings = {
   pids: 4096,
   cpuShares: 512,
   seccomp: 'devailoop',
+  apparmor: 'unconfined',
   buildkitImage: DEFAULT_BUILDKIT_IMAGE,
 };
 
@@ -169,6 +176,14 @@ export function agentContainerSettings(
       return { problem: `DEVAILOOP_AGENT_SECCOMP is "${seccomp}". It must be devailoop or unconfined.` };
     settings.seccomp = seccomp;
   }
+  const apparmor = value('DEVAILOOP_AGENT_APPARMOR');
+  if (apparmor !== undefined) {
+    if (apparmor.length > 255 || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(apparmor))
+      return {
+        problem: `DEVAILOOP_AGENT_APPARMOR is "${apparmor}". It must be unconfined or the name of an AppArmor profile loaded on the host.`,
+      };
+    settings.apparmor = apparmor;
+  }
   const buildkit = value('DEVAILOOP_BUILDKIT_IMAGE');
   if (buildkit !== undefined) {
     if (buildkit.length > 255 || !/^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/.test(buildkit))
@@ -195,6 +210,9 @@ function fixedOptions(
     // ordinary user, so it needs none of Docker's default capabilities, and gets no new privileges.
     '--security-opt',
     `seccomp=${limits.seccomp === 'unconfined' ? 'unconfined' : SECCOMP_PROFILE}`,
+    // The sandbox also makes its own mounts, which Docker's AppArmor profile refuses (see `apparmor`).
+    '--security-opt',
+    `apparmor=${limits.apparmor}`,
     '--security-opt',
     'no-new-privileges',
     '--cap-drop',
