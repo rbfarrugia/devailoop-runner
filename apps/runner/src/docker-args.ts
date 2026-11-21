@@ -213,6 +213,11 @@ function fixedOptions(
     // The sandbox also makes its own mounts, which Docker's AppArmor profile refuses (see `apparmor`).
     '--security-opt',
     `apparmor=${limits.apparmor}`,
+    // And mounts a fresh /proc for its own process namespace, which the kernel refuses inside a user
+    // namespace while Docker's masks cover parts of the container's /proc (/proc/kcore, /proc/acpi...).
+    // Unmasked, those are still closed to the Agent: it is an ordinary user with no capabilities.
+    '--security-opt',
+    'systempaths=unconfined',
     '--security-opt',
     'no-new-privileges',
     '--cap-drop',

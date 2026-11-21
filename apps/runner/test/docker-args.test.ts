@@ -331,6 +331,9 @@ describe('what a container may take from the host', () => {
       expect(options, kind).toContain(`--security-opt seccomp=${SECCOMP_PROFILE}`);
       // Docker's AppArmor profile, on Ubuntu, refuses the mounts the sandbox makes.
       expect(options, kind).toContain('--security-opt apparmor=unconfined');
+      // Docker's masks over /proc stop the sandbox mounting a /proc of its own (Docker 29, kernel 7.0).
+      expect(options, kind).toContain('--security-opt systempaths=unconfined');
+      expect(options, kind).not.toContain('--privileged');
     }
   });
 
